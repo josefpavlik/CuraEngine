@@ -1,160 +1,269 @@
 /** Copyright (C) 2013 David Braam - Released under terms of the AGPLv3 License */
-#include <map>
-
 #include "pathOrderOptimizer.h"
+#include "utils/logoutput.h"
+#include "utils/BucketGrid2D.h"
+#include "utils/linearAlg2D.h"
+
+#define INLINE static inline
 
 namespace cura {
 
-static uint32_t hashPoint(const Point& p)
-{
-    return (p.X / 20000) ^ (p.Y / 20000) << 8;
-}
-
+/**
+*
+*/
 void PathOrderOptimizer::optimize()
 {
-    const float incommingPerpundicularNormalScale = 0.0001f;
+    bool picked[polygons.size()];
+    memset(picked, false, sizeof(bool) * polygons.size());/// initialized as falses
     
-    std::map<uint32_t, std::vector<unsigned int>> location_to_polygon_map;
-    std::vector<bool> picked;
-    for(unsigned int i=0;i<polygons.size(); i++)
+    for (PolygonRef poly : polygons) /// find closest point to initial starting point within each polygon +initialize picked
     {
         int best = -1;
-        float bestDist = 0xFFFFFFFFFFFFFFFFLL;
-        PolygonRef poly = polygons[i];
-        for(unsigned int j=0; j<poly.size(); j++)
+        float bestDist = std::numeric_limits<float>::infinity();
+        for (unsigned int point_idx = 0; point_idx < poly.size(); point_idx++) /// get closest point in polygon
         {
-            float dist = vSize2f(poly[j] - startPoint);
+            float dist = vSize2f(poly[point_idx] - startPoint);
             if (dist < bestDist)
             {
-                best = j;
+                best = point_idx;
                 bestDist = dist;
             }
         }
         polyStart.push_back(best);
-        picked.push_back(false);
-        
-        if (poly.size() == 2)
-        {
-            location_to_polygon_map[hashPoint(poly[0])].push_back(i);
-            location_to_polygon_map[hashPoint(poly[1])].push_back(i);
-        }
+        //picked.push_back(false); /// initialize all picked values as false
+
+        assert(poly.size() != 2);
     }
 
-    Point incommingPerpundicularNormal(0, 0);
-    Point p0 = startPoint;
-    for(unsigned int n=0; n<polygons.size(); n++)
+
+    Point prev_point = startPoint;
+    for (unsigned int poly_order_idx = 0; poly_order_idx < polygons.size(); poly_order_idx++) /// actual path order optimizer
     {
-        int best = -1;
-        float bestDist = 0xFFFFFFFFFFFFFFFFLL;
-        
-        for(unsigned int i : location_to_polygon_map[hashPoint(p0)])
+        int best_poly_idx = -1;
+        float bestDist = std::numeric_limits<float>::infinity();
+
+
+        for (unsigned int poly_idx = 0; poly_idx < polygons.size(); poly_idx++)
         {
-            if (picked[i] || polygons[i].size() < 1)
+            if (picked[poly_idx] || polygons[poly_idx].size() < 1) /// skip single-point-polygons
+            {
                 continue;
+            }
 
-            float dist = vSize2f(polygons[i][0] - p0);
-            dist += abs(dot(incommingPerpundicularNormal, normal(polygons[i][1] - polygons[i][0], 1000))) * incommingPerpundicularNormalScale;
+            assert (polygons[poly_idx].size() != 2);
+
+            float dist = vSize2f(polygons[poly_idx][polyStart[poly_idx]] - prev_point);
             if (dist < bestDist)
             {
-                best = i;
+                best_poly_idx = poly_idx;
                 bestDist = dist;
-                polyStart[i] = 0;
             }
-            dist = vSize2f(polygons[i][1] - p0);
-            dist += abs(dot(incommingPerpundicularNormal, normal(polygons[i][0] - polygons[i][1], 1000))) * incommingPerpundicularNormalScale;
-            if (dist < bestDist)
-            {
-                best = i;
-                bestDist = dist;
-                polyStart[i] = 1;
-            }
+
         }
-        
-        if (best == -1)
+
+
+        if (best_poly_idx > -1) /// should always be true; we should have been able to identify the best next polygon
         {
-            for(unsigned int i=0;i<polygons.size(); i++)
-            {
-                if (picked[i] || polygons[i].size() < 1)
-                    continue;
-                if (polygons[i].size() == 2)
-                {
-                    float dist = vSize2f(polygons[i][0] - p0);
-                    dist += abs(dot(incommingPerpundicularNormal, normal(polygons[i][1] - polygons[i][0], 1000))) * incommingPerpundicularNormalScale;
-                    if (dist < bestDist)
-                    {
-                        best = i;
-                        bestDist = dist;
-                        polyStart[i] = 0;
-                    }
-                    dist = vSize2f(polygons[i][1] - p0);
-                    dist += abs(dot(incommingPerpundicularNormal, normal(polygons[i][0] - polygons[i][1], 1000))) * incommingPerpundicularNormalScale;
-                    if (dist < bestDist)
-                    {
-                        best = i;
-                        bestDist = dist;
-                        polyStart[i] = 1;
-                    }
-                }else{
-                    float dist = vSize2f(polygons[i][polyStart[i]] - p0);
-                    if (dist < bestDist)
-                    {
-                        best = i;
-                        bestDist = dist;
-                    }
-                }
-            }
+            assert(polygons[best_poly_idx].size() != 2);
+
+            prev_point = polygons[best_poly_idx][polyStart[best_poly_idx]];
+
+            picked[best_poly_idx] = true;
+            polyOrder.push_back(best_poly_idx);
         }
-        
-        if (best > -1)
+        else
         {
-            if (polygons[best].size() == 2)
-            {
-                int endIdx = (polyStart[best] + 1) % 2;
-                p0 = polygons[best][endIdx];
-                incommingPerpundicularNormal = crossZ(normal(polygons[best][endIdx] - polygons[best][polyStart[best]], 1000));
-            }else{
-                p0 = polygons[best][polyStart[best]];
-                incommingPerpundicularNormal = Point(0, 0);
-            }
-            picked[best] = true;
-            polyOrder.push_back(best);
+            logError("Failed to find next closest polygon.\n");
         }
     }
-    
-    p0 = startPoint;
-    for(int nr : polyOrder)
+
+    prev_point = startPoint;
+    for (unsigned int order_idx = 0; order_idx < polyOrder.size(); order_idx++) /// decide final starting points in each polygon
     {
-        PolygonRef poly = polygons[nr];
-        if (poly.size() > 2)
+        int poly_idx = polyOrder[order_idx];
+        int point_idx = getPolyStart(prev_point, poly_idx);
+        polyStart[poly_idx] = point_idx;
+        prev_point = polygons[poly_idx][point_idx];
+
+    }
+}
+
+int PathOrderOptimizer::getPolyStart(Point prev_point, int poly_idx)
+{
+    switch (type)
+    {
+        case EZSeamType::BACK:      return getFarthestPointInPolygon(poly_idx); 
+        case EZSeamType::RANDOM:    return getRandomPointInPolygon(poly_idx); 
+        case EZSeamType::SHORTEST:  return getClosestPointInPolygon(prev_point, poly_idx);
+        default:                    return getClosestPointInPolygon(prev_point, poly_idx);
+    }
+}
+
+
+int PathOrderOptimizer::getClosestPointInPolygon(Point prev_point, int poly_idx)
+{
+    PolygonRef poly = polygons[poly_idx];
+
+    int best_point_idx = -1;
+    float best_point_score = std::numeric_limits<float>::infinity();
+    Point p0 = poly.back();
+    for (unsigned int point_idx = 0; point_idx < poly.size(); point_idx++)
+    {
+        Point& p1 = poly[point_idx];
+        Point& p2 = poly[(point_idx + 1) % poly.size()];
+        int64_t dist = vSize2(p1 - prev_point);
+        float is_on_inside_corner_score = -LinearAlg2D::getAngleLeft(p0, p1, p2) / M_PI * 5000 * 5000; // prefer inside corners
+        // this score is in the order of 5 mm
+        if (dist + is_on_inside_corner_score < best_point_score)
         {
-            int best = -1;
-            float bestDist = 0xFFFFFFFFFFFFFFFFLL;
-            bool orientation = poly.orientation();
-            for(unsigned int i=0;i<poly.size(); i++)
-            {
-                const int64_t dot_score_scale = 2000;
-                float dist = vSize2f(polygons[nr][i] - p0);
-                Point n0 = normal(poly[(i+poly.size()-1)%poly.size()] - poly[i], dot_score_scale);
-                Point n1 = normal(poly[i] - poly[(i + 1) % poly.size()], dot_score_scale);
-                float dot_score = dot(n0, n1) - dot(crossZ(n0), n1);
-                if (orientation)
-                    dot_score = -dot_score;
-                dist += dot_score;
-                if (dist < bestDist)
-                {
-                    best = i;
-                    bestDist = dist;
-                }
-            }
-            polyStart[nr] = best;
+            best_point_idx = point_idx;
+            best_point_score = dist + is_on_inside_corner_score;
         }
-        if (poly.size() <= 2)
+        p0 = p1;
+    }
+    return best_point_idx;
+}
+
+int PathOrderOptimizer::getRandomPointInPolygon(int poly_idx)
+{
+    return rand() % polygons[poly_idx].size();
+}
+
+
+int PathOrderOptimizer::getFarthestPointInPolygon(int poly_idx)
+{
+    PolygonRef poly = polygons[poly_idx];
+    int best_point_idx = -1;
+    float best_y = std::numeric_limits<float>::min();
+    for(unsigned int point_idx=0 ; point_idx<poly.size() ; point_idx++)
+    {
+        if (poly[point_idx].Y > best_y)
         {
-            p0 = poly[(polyStart[nr] + 1) % 2];
-        }else{
-            p0 = poly[polyStart[nr]];
+            best_point_idx = point_idx;
+            best_y = poly[point_idx].Y;
+        }
+    }
+    return best_point_idx;
+}
+
+
+/**
+*
+*/
+void LineOrderOptimizer::optimize()
+{
+    int gridSize = 5000; // the size of the cells in the hash grid. TODO
+    BucketGrid2D<unsigned int> line_bucket_grid(gridSize);
+    bool picked[polygons.size()];
+    memset(picked, false, sizeof(bool) * polygons.size());/// initialized as falses
+    
+    for (unsigned int poly_idx = 0; poly_idx < polygons.size(); poly_idx++) /// find closest point to initial starting point within each polygon +initialize picked
+    {
+        int best_point_idx = -1;
+        float best_point_dist = std::numeric_limits<float>::infinity();
+        PolygonRef poly = polygons[poly_idx];
+        for (unsigned int point_idx = 0; point_idx < poly.size(); point_idx++) /// get closest point from polygon
+        {
+            float dist = vSize2f(poly[point_idx] - startPoint);
+            if (dist < best_point_dist)
+            {
+                best_point_idx = point_idx;
+                best_point_dist = dist;
+            }
+        }
+        polyStart.push_back(best_point_idx);
+
+        assert(poly.size() == 2);
+
+        line_bucket_grid.insert(poly[0], poly_idx);
+        line_bucket_grid.insert(poly[1], poly_idx);
+
+    }
+
+
+    Point incoming_perpundicular_normal(0, 0);
+    Point prev_point = startPoint;
+    for (unsigned int order_idx = 0; order_idx < polygons.size(); order_idx++) /// actual path order optimizer
+    {
+        int best_line_idx = -1;
+        float best_score = std::numeric_limits<float>::infinity(); // distance score for the best next line
+
+        for(unsigned int close_line_poly_idx :  line_bucket_grid.findNearbyObjects(prev_point)) /// check if single-line-polygon is close to last point
+        {
+            if (picked[close_line_poly_idx] || polygons[close_line_poly_idx].size() < 1)
+            {
+                continue;
+            }
+
+            updateBestLine(close_line_poly_idx, best_line_idx, best_score, prev_point, incoming_perpundicular_normal);
+        }
+
+        if (best_line_idx == -1) /// if single-line-polygon hasn't been found yet
+        {
+            for (unsigned int poly_idx = 0; poly_idx < polygons.size(); poly_idx++)
+            {
+                if (picked[poly_idx] || polygons[poly_idx].size() < 1) /// skip single-point-polygons
+                {
+                    continue;
+                }
+                assert(polygons[poly_idx].size() == 2);
+
+                updateBestLine(poly_idx, best_line_idx, best_score, prev_point, incoming_perpundicular_normal);
+
+            }
+        }
+
+        if (best_line_idx > -1) /// should always be true; we should have been able to identify the best next polygon
+        {
+            PolygonRef best_line = polygons[best_line_idx];
+            assert(best_line.size() == 2);
+
+            int line_start_point_idx = polyStart[best_line_idx];
+            int line_end_point_idx = line_start_point_idx * -1 + 1; /// 1 -> 0 , 0 -> 1
+            Point& line_start = best_line[line_start_point_idx];
+            Point& line_end = best_line[line_end_point_idx];
+            prev_point = line_end;
+            incoming_perpundicular_normal = turn90CCW(normal(line_end - line_start, 1000));
+
+            picked[best_line_idx] = true;
+            polyOrder.push_back(best_line_idx);
+        }
+        else
+        {
+            logError("Failed to find next closest line.\n");
         }
     }
 }
+
+inline void LineOrderOptimizer::updateBestLine(unsigned int poly_idx, int& best, float& best_score, Point prev_point, Point incoming_perpundicular_normal)
+{
+    Point& p0 = polygons[poly_idx][0];
+    Point& p1 = polygons[poly_idx][1];
+    float dot_score = getAngleScore(incoming_perpundicular_normal, p0, p1);
+    { /// check distance to first point on line (0)
+        float score = vSize2f(p0 - prev_point) + dot_score; // prefer 90 degree corners
+        if (score < best_score)
+        {
+            best = poly_idx;
+            best_score = score;
+            polyStart[poly_idx] = 0;
+        }
+    }
+    { /// check distance to second point on line (1)
+        float score = vSize2f(p1 - prev_point) + dot_score; // prefer 90 degree corners
+        if (score < best_score)
+        {
+            best = poly_idx;
+            best_score = score;
+            polyStart[poly_idx] = 1;
+        }
+    }
+}
+
+float LineOrderOptimizer::getAngleScore(Point incoming_perpundicular_normal, Point p0, Point p1)
+{
+    return dot(incoming_perpundicular_normal, normal(p1 - p0, 1000)) * 0.0001f;
+}
+
 
 }//namespace cura

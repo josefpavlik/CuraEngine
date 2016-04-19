@@ -6,19 +6,18 @@ namespace cura {
 
 void generateRaft(SliceDataStorage& storage, int distance)
 {
-    for(unsigned int volumeIdx = 0; volumeIdx < storage.volumes.size(); volumeIdx++)
+    if (storage.draft_protection_shield.size() > 0)
     {
-        if (storage.volumes[volumeIdx].layers.size() < 1) continue;
-        SliceLayer* layer = &storage.volumes[volumeIdx].layers[0];
-        for(unsigned int i=0; i<layer->parts.size(); i++)
-        {
-            storage.raftOutline = storage.raftOutline.unionPolygons(layer->parts[i].outline.offset(distance));
-        }
+        storage.raftOutline = storage.raftOutline.unionPolygons(storage.draft_protection_shield.offset(distance));
     }
-
-    SupportPolyGenerator supportGenerator(storage.support, 0);
-    storage.raftOutline = storage.raftOutline.unionPolygons(supportGenerator.polygons.offset(distance));
-    storage.raftOutline = storage.raftOutline.unionPolygons(storage.wipeTower.offset(distance));
+    else if (storage.oozeShield.size() > 0 && storage.oozeShield[0].size() > 0)
+    {
+        storage.raftOutline = storage.raftOutline.unionPolygons(storage.oozeShield[0].offset(distance));
+    }
+    else 
+    {
+        storage.raftOutline = storage.getLayerOutlines(0, true).offset(distance);
+    }
 }
 
 }//namespace cura

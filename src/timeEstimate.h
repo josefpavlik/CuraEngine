@@ -4,10 +4,13 @@
 #include <stdint.h>
 #include <vector>
 
-/**
-    The TimeEstimateCalculator class generates a estimate of printing time calculated with acceleration in mind.
-    Some of this code has been addapted from the Marlin sources.
-*/
+namespace cura
+{
+    
+/*!
+ *  The TimeEstimateCalculator class generates a estimate of printing time calculated with acceleration in mind.
+ *  Some of this code has been adapted from the Marlin sources.
+ */
 
 class TimeEstimateCalculator
 {
@@ -51,6 +54,8 @@ public:
     };
 
 private:
+    double extra_time;
+    
     Position previous_feedrate;
     double previous_nominal_feedrate;
 
@@ -58,8 +63,14 @@ private:
 
     std::vector<Block> blocks;
 public:
+    TimeEstimateCalculator()
+    : extra_time(0.0)
+    {
+    }
+     
     void setPosition(Position newPos);
     void plan(Position newPos, double feedRate);
+    void addTime(double time);
     void reset();
     
     double calculate();
@@ -73,4 +84,5 @@ private:
     void planner_forward_pass_kernel(Block *previous, Block *current, Block *next);
 };
 
+}//namespace cura
 #endif//TIME_ESTIMATE_H

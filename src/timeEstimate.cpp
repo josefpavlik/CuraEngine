@@ -4,6 +4,9 @@
 #include <algorithm>
 #include "timeEstimate.h"
 
+namespace cura
+{
+    
 #define MINIMUM_PLANNER_SPEED 0.05// (mm/sec)
 
 const double max_feedrate[TimeEstimateCalculator::NUM_AXIS] = {600, 600, 40, 25};
@@ -21,8 +24,15 @@ void TimeEstimateCalculator::setPosition(Position newPos)
     currentPosition = newPos;
 }
 
+void TimeEstimateCalculator::addTime(double time)
+{
+    extra_time += time;
+}
+
+
 void TimeEstimateCalculator::reset()
 {
+    extra_time = 0.0;
     blocks.clear();
 }
 
@@ -187,14 +197,15 @@ double TimeEstimateCalculator::calculate()
     forward_pass();
     recalculate_trapezoids();
     
-    double totalTime = 0;
+    double totalTime = extra_time;
     for(unsigned int n=0; n<blocks.size(); n++)
     {
-        double plateau_distance = blocks[n].decelerate_after - blocks[n].accelerate_until;
+        Block& block = blocks[n];
+        double plateau_distance = block.decelerate_after - block.accelerate_until;
         
-        totalTime += acceleration_time_from_distance(blocks[n].initial_feedrate, blocks[n].accelerate_until, blocks[n].acceleration);
-        totalTime += plateau_distance / blocks[n].nominal_feedrate;
-        totalTime += acceleration_time_from_distance(blocks[n].final_feedrate, (blocks[n].distance - blocks[n].decelerate_after), blocks[n].acceleration);
+        totalTime += acceleration_time_from_distance(block.initial_feedrate, block.accelerate_until, block.acceleration);
+        totalTime += plateau_distance / block.nominal_feedrate;
+        totalTime += acceleration_time_from_distance(block.final_feedrate, (block.distance - block.decelerate_after), block.acceleration);
     }
     return totalTime;
 }
@@ -283,7 +294,7 @@ void TimeEstimateCalculator::recalculate_trapezoids()
     Block *current;
     Block *next = nullptr;
 
-    for(unsigned int n=0; n<blocks.size(); n--)
+    for(unsigned int n=0; n<blocks.size(); n++)
     {
         current = next;
         next = &blocks[n];
@@ -305,3 +316,5 @@ void TimeEstimateCalculator::recalculate_trapezoids()
         next->recalculate_flag = false;
     }
 }
+
+}//namespace cura
