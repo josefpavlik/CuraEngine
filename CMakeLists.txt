@@ -28,9 +28,11 @@ set(CURA_ENGINE_VERSION "master" CACHE STRING "Version name of Cura")
 option(BUILD_TESTS OFF)
 
 # Add a compiler flag to check the output for insane values if we are in debug mode.
-if(CMAKE_BUILD_TYPE MATCHES DEBUG)
+if(CMAKE_BUILD_TYPE MATCHES DEBUG OR CMAKE_BUILD_TYPE MATCHES RelWithDebInfo)
     message(STATUS "Building debug release of CuraEngine.")
     add_definitions(-DASSERT_INSANE_OUTPUT)
+    add_definitions(-DUSE_CPU_TIME)
+    add_definitions(-DDEBUG)
 endif()
 
 # Add warnings
@@ -46,15 +48,17 @@ add_library(clipper STATIC libs/clipper/clipper.cpp)
 
 set(engine_SRCS # Except main.cpp.
     src/bridge.cpp
-    src/comb.cpp
     src/commandSocket.cpp
+    src/ConicalOverhang.cpp
+    src/ExtruderTrain.cpp
     src/FffGcodeWriter.cpp
     src/FffPolygonGenerator.cpp
     src/FffProcessor.cpp
     src/gcodeExport.cpp
+    src/GCodePathConfig.cpp
     src/gcodePlanner.cpp
     src/infill.cpp
-    src/inset.cpp
+    src/WallsComputation.cpp
     src/layerPart.cpp
     src/LayerPlanBuffer.cpp
     src/MergeInfillLines.cpp
@@ -64,14 +68,13 @@ set(engine_SRCS # Except main.cpp.
     src/pathOrderOptimizer.cpp
     src/PrimeTower.cpp
     src/raft.cpp
-    src/settingRegistry.cpp
-    src/settings.cpp
     src/skin.cpp
-    src/skirt.cpp
+    src/SkirtBrim.cpp
     src/sliceDataStorage.cpp
     src/slicer.cpp
     src/support.cpp
     src/timeEstimate.cpp
+    src/WallsComputation.cpp
     src/wallOverlap.cpp
     src/Weaver.cpp
     src/Wireframe2gcode.cpp
@@ -82,14 +85,28 @@ set(engine_SRCS # Except main.cpp.
     src/infill/ZigzagConnectorProcessorEndPieces.cpp
     src/infill/ZigzagConnectorProcessorNoEndPieces.cpp
 
+    src/pathPlanning/Comb.cpp
+    src/pathPlanning/LinePolygonsCrossings.cpp
+
     src/progress/Progress.cpp
     src/progress/ProgressStageEstimator.cpp
 
+    src/settings/SettingConfig.cpp
+    src/settings/SettingContainer.cpp
+    src/settings/SettingRegistry.cpp
+    src/settings/settings.cpp
+
+    src/utils/AABB.cpp
+    src/utils/AABB3D.cpp
+    src/utils/Date.cpp
     src/utils/gettime.cpp
     src/utils/LinearAlg2D.cpp
+    src/utils/ListPolyIt.cpp
     src/utils/logoutput.cpp
+    src/utils/PolygonProximityLinker.cpp
     src/utils/polygonUtils.cpp
     src/utils/polygon.cpp
+    src/utils/ProximityPointLink.cpp
 )
 
 # List of tests. For each test there must be a file tests/${NAME}.cpp and a file tests/${NAME}.h.
@@ -99,9 +116,10 @@ set(engine_TEST
 set(engine_TEST_INFILL
 )
 set(engine_TEST_UTILS
-    BucketGrid2DTest
+    SparseGridTest
     LinearAlg2DTest
     PolygonUtilsTest
+    PolygonTest
 )
 
 # Generating ProtoBuf protocol

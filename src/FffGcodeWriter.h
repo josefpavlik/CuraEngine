@@ -39,14 +39,6 @@ class FffGcodeWriter : public SettingsMessenger, NoCopy
 private:
     int max_object_height; //!< The maximal height of all previously sliced meshgroups, used to avoid collision when moving to the next meshgroup to print.
 
-    /*!
-     * The number of the current meshgroup being processed.
-     * 
-     * Used for sequential printing of objects.
-     * The first meshgroup will get number 1.
-     */
-    int meshgroup_number; 
-
     /*
      * Buffer for all layer plans (of type GCodePlanner)
      * 
@@ -74,7 +66,13 @@ private:
      */
     int last_prime_tower_poly_printed[MAX_EXTRUDERS]; 
 
-    FanSpeedLayerTimeSettings fan_speed_layer_time_settings; //!< The settings used relating to minimal layer time and fan speeds.
+    /*!
+     * Whether the skirt or brim polygons have been processed into planned paths
+     * for each extruder train.
+     */
+    bool skirt_brim_is_processed[MAX_EXTRUDERS];
+
+    std::vector<FanSpeedLayerTimeSettings> fan_speed_layer_time_settings_per_extruder; //!< The settings used relating to minimal layer time and fan speeds. Configured for each extruder.
 
     Point last_position_planned; //!< The position of the head before planning the next layer
     int current_extruder_planned; //!< The extruder train in use before planning the next layer
@@ -84,19 +82,10 @@ public:
     : SettingsMessenger(settings_)
     , layer_plan_buffer(this, gcode)
     , last_position_planned(no_point)
-    , current_extruder_planned(0) // TODO: make configurable
+    , current_extruder_planned(0) // changed somewhere early in FffGcodeWriter::writeGCode
     , is_inside_mesh_layer_part(false)
     {
-        meshgroup_number = 1;
         max_object_height = 0;
-    }
-
-    /*!
-     * Reset the meshgroup number to process the next slicing.
-     */
-    void resetMeshGroupNumber()
-    {
-        meshgroup_number = 1;
     }
 
     /*!
@@ -164,8 +153,10 @@ public:
 private:
     /*!
      * Set the FffGcodeWriter::fan_speed_layer_time_settings by retrieving all settings from the global/per-meshgroup settings.
+     * 
+     * \param[out] storage The data storage to which to save the configuration
      */
-    void setConfigFanSpeedLayerTime();
+    void setConfigFanSpeedLayerTime(SliceDataStorage& storage);
 
     /*!
      * Create and set the SliceDataStorage::coasting_config for each extruder.
@@ -182,11 +173,13 @@ private:
     void setConfigRetraction(SliceDataStorage& storage);
     
     /*!
-     * Initialize the GcodePathConfig config parameters which don't change over all layers, for each feature.
+     * Initialize the GcodePathConfig config parameters which don't change over
+     * all layers, for each feature.
      * 
-     * The features are: skirt, support and for each mesh: outer wall, inner walls, skin, infill (and combined infill)
+     * The features are: skirt or brim, support and for each mesh: outer wall,
+     * inner walls, skin, infill (and combined infill).
      * 
-     * \param[out] storage The data storage to which to save the configurations
+     * \param[out] storage The data storage to which to save the configurations.
      */
     void initConfigs(SliceDataStorage& storage);
     
@@ -209,29 +202,32 @@ private:
     /*!
      * Add raft layer plans onto the FffGcodeWriter::layer_plan_buffer
      * 
-     * \param[in] storage where the slice data is stored.
+     * \param[in,out] storage where the slice data is stored.
      * \param total_layers The total number of layers.
      */
     void processRaft(SliceDataStorage& storage, unsigned int total_layers);
-    
+
     /*!
      * Convert the polygon data of a layer into a layer plan on the FffGcodeWriter::layer_plan_buffer
+     * 
+     * In case of negative layer numbers, create layers only containing the data from
+     * the helper parts (support etc) to fill up the gap between the raft and the model.
      * 
      * \param[in] storage where the slice data is stored.
      * \param layer_nr The index of the layer to write the gcode of.
      * \param total_layers The total number of layers.
-     * \param has_raft Whether a raft is used for this print.
      */
-    void processLayer(SliceDataStorage& storage, unsigned int layer_nr, unsigned int total_layers, bool has_raft);
+    void processLayer(SliceDataStorage& storage, int layer_nr, unsigned int total_layers);
     
     /*!
-     * Add the skirt to the layer plan \p gcodeLayer.
+     * Add the skirt or the brim to the layer plan \p gcodeLayer.
      * 
-     * \param[in] storage where the slice data is stored.
-     * \param gcodeLayer The initial planning of the gcode of the layer.
-     * \param extruder_nr The extrudewr train for which to process the skirt
+     * \param Storage where the slice data is stored.
+     * \param gcodeLayer The initial planning of the g-code of the layer.
+     * \param extruder_nr The extruder train for which to process the skirt or
+     * brim.
      */
-    void processSkirt(SliceDataStorage& storage, GCodePlanner& gcodeLayer, unsigned int extruder_nr);
+    void processSkirtBrim(SliceDataStorage& storage, GCodePlanner& gcodeLayer, unsigned int extruder_nr);
     
     /*!
      * Adds the ooze shield to the layer plan \p gcodeLayer.
@@ -303,9 +299,8 @@ private:
      * \param infill_line_distance The distance between the infill lines
      * \param infill_overlap The distance by which the infill overlaps with the wall insets.
      * \param fillAngle The angle in the XY plane at which the infill is generated.
-     * \param extrusionWidth extrusionWidth
      */
-    void processMultiLayerInfill(GCodePlanner& gcodeLayer, SliceMeshStorage* mesh, SliceLayerPart& part, unsigned int layer_nr, int infill_line_distance, int infill_overlap, int fillAngle, int extrusionWidth); 
+    void processMultiLayerInfill(GCodePlanner& gcodeLayer, SliceMeshStorage* mesh, SliceLayerPart& part, unsigned int layer_nr, int infill_line_distance, int infill_overlap, int fillAngle); 
     
     /*!
      * Add normal sparse infill for a given part in a layer.
@@ -316,9 +311,8 @@ private:
      * \param infill_line_distance The distance between the infill lines
      * \param infill_overlap The distance by which the infill overlaps with the wall insets.
      * \param fillAngle The angle in the XY plane at which the infill is generated.
-     * \param extrusionWidth extrusionWidth
      */
-    void processSingleLayerInfill(GCodePlanner& gcodeLayer, SliceMeshStorage* mesh, SliceLayerPart& part, unsigned int layer_nr, int infill_line_distance, int infill_overlap, int fillAngle, int extrusionWidth);
+    void processSingleLayerInfill(GCodePlanner& gcodeLayer, SliceMeshStorage* mesh, SliceLayerPart& part, unsigned int layer_nr, int infill_line_distance, int infill_overlap, int fillAngle);
     
     /*!
      * Generate the insets for the walls of a given layer part.
@@ -337,11 +331,10 @@ private:
      * \param mesh The mesh for which to add to the layer plan \p gcodeLayer.
      * \param part The part for which to create gcode
      * \param layer_nr The current layer number.
-     * \param infill_overlap The distance by which the infill overlaps with the wall insets.
+     * \param skin_overlap The distance by which the skin overlaps with the wall insets.
      * \param fillAngle The angle in the XY plane at which the infill is generated.
-     * \param extrusionWidth extrusionWidth
      */
-    void processSkin(cura::GCodePlanner& gcode_layer, cura::SliceMeshStorage* mesh, cura::SliceLayerPart& part, unsigned int layer_nr, int infill_overlap, int infill_angle, int extrusion_width);
+    void processSkin(cura::GCodePlanner& gcode_layer, cura::SliceMeshStorage* mesh, cura::SliceLayerPart& part, unsigned int layer_nr, int skin_overlap, int infill_angle);
     
     /*!
      * Add the support to the layer plan \p gcodeLayer of the current layer.
@@ -360,7 +353,7 @@ private:
      */
     void addSupportInfillToGCode(SliceDataStorage& storage, GCodePlanner& gcodeLayer, int layer_nr);
     /*!
-     * Add the support roofs to the layer plan \p gcodeLayer of the current layer.
+     * Add the support skins to the layer plan \p gcodeLayer of the current layer.
      * \param[in] storage where the slice data is stored.
      * \param gcodeLayer The initial planning of the gcode of the layer.
      * \param layer_nr The index of the layer to write the gcode of.
